@@ -36,43 +36,27 @@ app.post("/chatwoot-webhook", async (req, res) => {
             console.log("✅ Valid message event detected");
             
             const convId = event.conversation.id;
-            let customAttributes = event.conversation.custom_attributes || {};
-            let channel = customAttributes.slack_channel;
-            
-            console.log("🔍 Initial custom attributes from webhook:", customAttributes);
+            const inboxId = event.inbox.id.toString();
+            const customAttributes = event.contact.custom_attributes || {};
+            console.log("🔍 Custom attributes:", customAttributes);
 
-            // Fallback: If slack_channel is missing, fetch it directly from the Chatwoot API.
-            // This handles the race condition where the first message webhook is sent before attributes are processed.
-            if (!channel) {
-               console.warn("⚠️ slack_channel missing from webhook. Attempting to fetch from Chatwoot API as a fallback...");
-               try {
-                   const convResponse = await fetch(`https://app.chatwoot.com/api/v1/conversations/${convId}`, {
-                       headers: { api_access_token: process.env.CHATWOOT_API_TOKEN },
-                   });
-                   if (convResponse.ok) {
-                       const convDetails = await convResponse.json();
-                       customAttributes = convDetails.custom_attributes || {};
-                       channel = customAttributes.slack_channel;
-                       console.log("✅ Successfully fetched conversation details. Found channel:", channel);
-                   } else {
-                       console.error(`❌ Failed to fetch conversation details. Status: ${convResponse.status}`);
-                   }
-               } catch (apiError) {
-                   console.error("💥 Error fetching conversation details from Chatwoot API:", apiError);
-               }
-            }
+            // Get channel dynamically from custom attributes, with fallback to map
+            const channel = customAttributes.slack_channel;
+            console.log("🔍 Channel:", channel);
             
             const text = event.content;
             const senderName = event.sender.name;
  
-             console.log("📊 Final extracted data:");
+             console.log("📊 Extracted data:");
              console.log("   - Conversation ID:", convId);
+             console.log("   - Inbox ID:", inboxId);
+             console.log("   - Custom Attributes:", JSON.stringify(customAttributes));
              console.log("   - Channel:", channel);
              console.log("   - Text:", text);
              console.log("   - Sender:", senderName);
  
              if (!channel) {
-                 console.log("❌ No slack_channel custom attribute found, even after API fallback. Message will be ignored.");
+                 console.log("❌ No channel found from custom attributes or inbox map.");
                  return res.sendStatus(200);
              }
 
