@@ -18,6 +18,8 @@ app.get('/', (req, res) => {
 });
 
 app.post("/chatwoot-webhook", async (req, res) => {
+    console.log("Chatwoot webhook received", req.body);
+    
     try {
         const event = req.body;
         if (
