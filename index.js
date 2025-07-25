@@ -31,9 +31,9 @@ app.get('/', async (req, res) => {
 });
 
 // Clear Redis endpoint (for debugging)
-app.delete('/redis/clear', async (req, res) => {
+app.get('/redis/clear', async (req, res) => {
     try {
-        await redis.flushall();
+        await redis.flushAll();
         res.json({ message: '✅ Redis cleared successfully' });
     } catch (err) {
         console.error("❌ Error clearing Redis:", err);
