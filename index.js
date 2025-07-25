@@ -62,27 +62,56 @@ app.post("/chatwoot-webhook", async (req, res) => {
                 return res.sendStatus(200);
             }
 
-            console.log("🚀 Sending message to Slack...");
+            // Check if this conversation already has a thread in Slack
+            const existingThreadKey = `conv:${convId}:thread`;
+            const existingThreadTs = await redis.get(existingThreadKey);
+            
+            console.log("🔍 Checking for existing thread:", existingThreadKey);
+            console.log("💾 Existing thread timestamp:", existingThreadTs);
+
             const slackMessage = `*${senderName}*: ${text}`;
             console.log("📤 Slack message content:", slackMessage);
 
+            let slackPayload = {
+                channel: channel,
+                text: slackMessage
+            };
+
+            // If there's an existing thread, post as a reply
+            if (existingThreadTs) {
+                slackPayload.thread_ts = existingThreadTs;
+                console.log("🧵 Posting as thread reply to:", existingThreadTs);
+            } else {
+                console.log("🆕 Creating new message (will become thread parent)");
+            }
+
+            console.log("🚀 Sending message to Slack...");
             const response = await fetch("https://slack.com/api/chat.postMessage", {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify({ channel, text: slackMessage }),
+                body: JSON.stringify(slackPayload),
             });
             
             const data = await response.json();
             console.log("📥 Slack API response:", JSON.stringify(data, null, 2));
             
             if (data.ok) {
-                const redisKey = `${channel}:${data.message.ts}`;
-                await redis.set(redisKey, convId.toString());
+                // If this was a new message (not a thread reply), store the thread mapping
+                if (!existingThreadTs) {
+                    // Store conversation -> thread mapping
+                    await redis.set(existingThreadKey, data.message.ts);
+                    console.log("💾 Stored conversation->thread mapping:", existingThreadKey, "->", data.message.ts);
+                }
+                
+                // Always store thread -> conversation mapping for replies
+                const threadToConvKey = `${channel}:${data.message.thread_ts || data.message.ts}`;
+                await redis.set(threadToConvKey, convId.toString());
+                console.log("💾 Stored thread->conversation mapping:", threadToConvKey, "->", convId.toString());
+                
                 console.log("✅ Message sent to Slack successfully");
-                console.log("💾 Stored in Redis:", redisKey, "->", convId.toString());
             } else {
                 console.error("❌ Slack API Error:", data.error);
                 if (data.response_metadata) {
@@ -115,11 +144,17 @@ app.post("/slack-events", async (req, res) => {
         const ev = body.event;
         console.log("🔍 Event data:", JSON.stringify(ev, null, 2));
         
-        if (ev && ev.type === "message" && ev.thread_ts && !ev.bot_id) {
-            console.log("✅ Valid threaded message from user detected");
+        // Handle both threaded messages and replies to thread parents
+        if (ev && ev.type === "message" && !ev.bot_id && ev.text) {
+            console.log("✅ Valid message from user detected");
             
-            const key = `${ev.channel}:${ev.thread_ts}`;
+            // Check if this is a threaded message or a reply to a thread
+            const threadTs = ev.thread_ts || ev.ts; // Use thread_ts if available, otherwise the message itself
+            const key = `${ev.channel}:${threadTs}`;
+            
             console.log("🔑 Looking up Redis key:", key);
+            console.log("🧵 Thread timestamp:", threadTs);
+            console.log("📝 Is threaded reply:", !!ev.thread_ts);
             
             const convId = await redis.get(key);
             console.log("💾 Redis lookup result:", convId);
@@ -137,7 +172,7 @@ app.post("/slack-events", async (req, res) => {
                     },
                     body: JSON.stringify({
                         content: ev.text,
-                        message_type: "incoming",
+                        message_type: "outgoing", // This represents agent/team member responses
                     }),
                 });
 
@@ -152,14 +187,16 @@ app.post("/slack-events", async (req, res) => {
                     console.log("📋 Chatwoot response:", JSON.stringify(responseData, null, 2));
                 }
             } else {
-                console.log("⚠️ No conversation mapping found for thread");
+                console.log("⚠️ No conversation mapping found for this message/thread");
+                console.log("🔍 Tried key:", key);
             }
         } else {
-            console.log("⏭️ Skipping event - not a threaded user message");
+            console.log("⏭️ Skipping event - not a valid user message");
             if (ev) {
                 console.log("   - Event type:", ev.type);
-                console.log("   - Has thread_ts:", !!ev.thread_ts);
+                console.log("   - Has text:", !!ev.text);
                 console.log("   - Is bot:", !!ev.bot_id);
+                console.log("   - Has thread_ts:", !!ev.thread_ts);
             }
         }
     } catch (error) {
