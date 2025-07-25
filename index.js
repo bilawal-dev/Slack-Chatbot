@@ -10,14 +10,6 @@ const redis = await createClient({
 
 console.log("✅ Redis connected successfully");
 
-// Maps a Chatwoot Inbox ID to a specific Slack Channel name.
-// You can find your Inbox ID in your Chatwoot settings or from the Vercel logs.
-const INBOX_TO_CHANNEL_MAP = {
-    // From your log, the Inbox ID for 'Subway Support' is 71647.
-    // Replace '#your-channel' with the actual Slack channel you want to use.
-    '71647': '#your-channel'
-};
-
 const app = express();
 app.use(express.json());
 
@@ -45,17 +37,26 @@ app.post("/chatwoot-webhook", async (req, res) => {
             
             const convId = event.conversation.id;
             const inboxId = event.inbox.id.toString();
-            // Static channel for testing
-            const channel = "C097BE9AFCK"; // Fixed: added quotes
+            const customAttributes = event.conversation.custom_attributes || {};
+
+            // Get channel dynamically from custom attributes, with fallback to map
+            const channel = customAttributes.slack_channel || INBOX_TO_CHANNEL_MAP[inboxId];
+            
             const text = event.content;
             const senderName = event.sender.name;
-
-            console.log("📊 Extracted data:");
-            console.log("   - Conversation ID:", convId);
-            console.log("   - Inbox ID:", inboxId);
-            console.log("   - Channel:", channel);
-            console.log("   - Text:", text);
-            console.log("   - Sender:", senderName);
+ 
+             console.log("📊 Extracted data:");
+             console.log("   - Conversation ID:", convId);
+             console.log("   - Inbox ID:", inboxId);
+             console.log("   - Custom Attributes:", JSON.stringify(customAttributes));
+             console.log("   - Channel:", channel);
+             console.log("   - Text:", text);
+             console.log("   - Sender:", senderName);
+ 
+             if (!channel) {
+                 console.log("❌ No channel found from custom attributes or inbox map.");
+                 return res.sendStatus(200);
+             }
 
             if (!text) {
                 console.log("❌ No content in Chatwoot webhook payload.");
