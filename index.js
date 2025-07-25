@@ -37,7 +37,7 @@ app.post("/chatwoot-webhook", async (req, res) => {
             
             const convId = event.conversation.id;
             const inboxId = event.inbox.id.toString();
-            const customAttributes = event.contact.custom_attributes || {};
+            const customAttributes = event.sender.custom_attributes || {};
             console.log("🔍 Custom attributes:", customAttributes);
 
             // Get channel dynamically from custom attributes, with fallback to map
