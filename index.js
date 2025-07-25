@@ -15,8 +15,19 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
 
-app.get('/', (req, res) => {
-    res.send('Hello World!');
+app.get('/', async (req, res) => {
+    try {
+        const keys = await redis.keys('*');
+        console.log("🧩 All Redis keys:", keys);
+
+        res.json({
+            message: '✅ Redis keys fetched successfully',
+            keys,
+        });
+    } catch (err) {
+        console.error("❌ Error fetching Redis keys:", err);
+        res.status(500).json({ error: 'Error fetching Redis keys' });
+    }
 });
 
 app.post("/chatwoot-webhook", async (req, res) => {
