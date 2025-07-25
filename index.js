@@ -196,6 +196,7 @@ app.post("/slack-events", async (req, res) => {
             console.log("💾 Redis lookup result (raw):", rawData);
             
             if (rawData) {
+                // Found existing mapping - process normally
                 let accountId, convId, folderId, slackChannel;
                 try {
                     const parsedData = JSON.parse(rawData);
@@ -248,8 +249,67 @@ app.post("/slack-events", async (req, res) => {
                     console.log("✅ Message sent to Chatwoot successfully");
                     console.log("📋 Chatwoot response:", JSON.stringify(responseData, null, 2));
                 }
+            } else if (!ev.thread_ts) {
+                // No mapping found AND it's not a threaded reply
+                // This could be a new message from an agent in a different channel
+                console.log("🔍 No mapping found for standalone message. Checking if this is a new channel message...");
+                
+                // Search for active conversations that might be associated with this channel
+                const allKeys = await redis.keys('*');
+                const threadKeys = allKeys.filter(key => key.includes(':thread'));
+                
+                console.log("🔍 Found thread keys:", threadKeys);
+                
+                // Look for conversations where the slack_channel matches this message's channel
+                for (const threadKey of threadKeys) {
+                    const threadTs = await redis.get(threadKey);
+                    if (threadTs) {
+                        // Get the conversation data using the thread timestamp
+                        const conversationKeys = allKeys.filter(key => key.endsWith(threadTs));
+                        for (const convKey of conversationKeys) {
+                            const convData = await redis.get(convKey);
+                            if (convData) {
+                                try {
+                                    const parsedConvData = JSON.parse(convData);
+                                    if (parsedConvData.slackChannel === ev.channel) {
+                                        console.log("🎯 Found matching conversation for channel:", ev.channel);
+                                        console.log("📊 Conversation data:", parsedConvData);
+                                        
+                                        // Send to Chatwoot using this conversation
+                                        const chatwootUrl = `https://app.chatwoot.com/api/v1/accounts/${parsedConvData.accountId}/conversations/${parsedConvData.conversationId}/messages`;
+                                        
+                                        const response = await fetch(chatwootUrl, {
+                                            method: "POST",
+                                            headers: {
+                                                "Content-Type": "application/json",
+                                                api_access_token: process.env.CHATWOOT_API_TOKEN,
+                                            },
+                                            body: JSON.stringify({
+                                                content: ev.text,
+                                                message_type: "outgoing",
+                                            }),
+                                        });
+
+                                        if (response.ok) {
+                                            console.log("✅ Message sent to Chatwoot for new channel message");
+                                            return res.sendStatus(200);
+                                        } else {
+                                            console.error("❌ Failed to send to Chatwoot:", response.status);
+                                        }
+                                        break;
+                                    }
+                                } catch (e) {
+                                    // Skip invalid data
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                console.log("⚠️ No active conversation found for channel:", ev.channel);
             } else {
-                console.log("⚠️ No conversation mapping found for this message/thread");
+                console.log("⚠️ No conversation mapping found for threaded message");
                 console.log("🔍 Tried key:", key);
             }
         } else {
