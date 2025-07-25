@@ -38,9 +38,11 @@ app.post("/chatwoot-webhook", async (req, res) => {
             const convId = event.conversation.id;
             const inboxId = event.inbox.id.toString();
             const customAttributes = event.conversation.custom_attributes || {};
+            console.log("🔍 Custom attributes:", customAttributes);
 
             // Get channel dynamically from custom attributes, with fallback to map
-            const channel = customAttributes.slack_channel || INBOX_TO_CHANNEL_MAP[inboxId];
+            const channel = customAttributes.slack_channel;
+            console.log("🔍 Channel:", channel);
             
             const text = event.content;
             const senderName = event.sender.name;
