@@ -18,7 +18,6 @@ const PORT = process.env.PORT || 5000;
 app.get('/', async (req, res) => {
     try {
         const keys = await redis.keys('*');
-        console.log("🧩 All Redis keys:", keys);
 
         res.json({
             message: '✅ Redis keys fetched successfully',
@@ -113,17 +112,22 @@ app.post("/chatwoot-webhook", async (req, res) => {
             console.log("📥 Slack API response:", JSON.stringify(data, null, 2));
             
             if (data.ok) {
+                const dataToStore = JSON.stringify({
+                    accountId: event.account.id,
+                    conversationId: convId
+                });
+
                 // If this was a new message (not a thread reply), store the thread mapping
                 if (!existingThreadTs) {
                     // Store conversation -> thread mapping
-                    await redis.set(existingThreadKey, data.message.ts);
-                    console.log("💾 Stored conversation->thread mapping:", existingThreadKey, "->", data.message.ts);
+                    await redis.set(existingThreadKey, dataToStore);
+                    console.log("💾 Stored conversation->thread mapping:", existingThreadKey, "->", dataToStore);
                 }
                 
                 // Always store thread -> conversation mapping for replies
                 const threadToConvKey = `${channel}:${data.message.thread_ts || data.message.ts}`;
-                await redis.set(threadToConvKey, convId.toString());
-                console.log("💾 Stored thread->conversation mapping:", threadToConvKey, "->", convId.toString());
+                await redis.set(threadToConvKey, dataToStore);
+                console.log("💾 Stored thread->conversation mapping:", threadToConvKey, "->", dataToStore);
                 
                 console.log("✅ Message sent to Slack successfully");
             } else {
@@ -170,15 +174,27 @@ app.post("/slack-events", async (req, res) => {
             console.log("🧵 Thread timestamp:", threadTs);
             console.log("📝 Is threaded reply:", !!ev.thread_ts);
             
-            const convId = await redis.get(key);
-            console.log("💾 Redis lookup result:", convId);
+            const rawData = await redis.get(key);
+            console.log("💾 Redis lookup result (raw):", rawData);
             
-            if (convId) {
+            if (rawData) {
+                const { accountId, conversationId: convId } = JSON.parse(rawData);
+                console.log("📊 Parsed Redis data:", { accountId, convId });
+
+                if (!accountId || !convId) {
+                    console.error("❌ Invalid data in Redis:", rawData);
+                    return res.sendStatus(200);
+                }
+
                 console.log("🚀 Sending message to Chatwoot...");
                 console.log("📤 Message content:", ev.text);
+                console.log("🎯 Account ID:", accountId);
                 console.log("🎯 Conversation ID:", convId);
+
+                const chatwootUrl = `https://app.chatwoot.com/api/v1/accounts/${accountId}/conversations/${convId}/messages`;
+                console.log("🔗 Posting to Chatwoot URL:", chatwootUrl);
                 
-                const response = await fetch(`https://app.chatwoot.com/api/v1/conversations/${convId}/messages`, {
+                const response = await fetch(chatwootUrl, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
