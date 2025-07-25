@@ -117,14 +117,13 @@ app.post("/chatwoot-webhook", async (req, res) => {
                     conversationId: convId
                 });
 
-                // If this was a new message (not a thread reply), store the thread mapping
+                // If this was a new message (not a thread reply), store the conversation -> thread mapping
                 if (!existingThreadTs) {
-                    // Store conversation -> thread mapping
-                    await redis.set(existingThreadKey, dataToStore);
-                    console.log("💾 Stored conversation->thread mapping:", existingThreadKey, "->", dataToStore);
+                    await redis.set(existingThreadKey, data.message.ts); // Store the actual thread_ts
+                    console.log("💾 Stored conversation->thread mapping:", existingThreadKey, "->", data.message.ts);
                 }
                 
-                // Always store thread -> conversation mapping for replies
+                // Always store thread -> conversation mapping. Use the parent message's ts.
                 const threadToConvKey = `${channel}:${data.message.thread_ts || data.message.ts}`;
                 await redis.set(threadToConvKey, dataToStore);
                 console.log("💾 Stored thread->conversation mapping:", threadToConvKey, "->", dataToStore);
@@ -178,11 +177,23 @@ app.post("/slack-events", async (req, res) => {
             console.log("💾 Redis lookup result (raw):", rawData);
             
             if (rawData) {
-                const { accountId, conversationId: convId } = JSON.parse(rawData);
+                let accountId, convId;
+                try {
+                    // Try to parse the new JSON format
+                    const parsedData = JSON.parse(rawData);
+                    accountId = parsedData.accountId;
+                    convId = parsedData.conversationId;
+                } catch (e) {
+                    // If parsing fails, it's the old format (just the conversation ID)
+                    console.warn("⚠️ Could not parse Redis data as JSON. Falling back to old format.");
+                    convId = rawData; // The raw data is the conversation ID
+                    accountId = '129102'; // Hardcoded fallback for your account ID
+                }
+
                 console.log("📊 Parsed Redis data:", { accountId, convId });
 
                 if (!accountId || !convId) {
-                    console.error("❌ Invalid data in Redis:", rawData);
+                    console.error("❌ Invalid data in Redis, even after fallback:", rawData);
                     return res.sendStatus(200);
                 }
 
