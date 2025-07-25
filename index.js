@@ -15,17 +15,29 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
 
+// Helper endpoint to clear Redis (for debugging)
 app.get('/', async (req, res) => {
     try {
         const keys = await redis.keys('*');
-
         res.json({
             message: '✅ Redis keys fetched successfully',
             keys,
+            total: keys.length
         });
     } catch (err) {
         console.error("❌ Error fetching Redis keys:", err);
         res.status(500).json({ error: 'Error fetching Redis keys' });
+    }
+});
+
+// Clear Redis endpoint (for debugging)
+app.delete('/redis/clear', async (req, res) => {
+    try {
+        await redis.flushall();
+        res.json({ message: '✅ Redis cleared successfully' });
+    } catch (err) {
+        console.error("❌ Error clearing Redis:", err);
+        res.status(500).json({ error: 'Error clearing Redis' });
     }
 });
 
@@ -38,7 +50,6 @@ app.post("/chatwoot-webhook", async (req, res) => {
         console.log("🔍 Event type:", event.event);
         console.log("📝 Message type:", event.message_type);
         
-        // Updated logic based on your Vercel log
         if (
             event.event === "message_created" &&
             event.message_type === "incoming"
@@ -46,47 +57,53 @@ app.post("/chatwoot-webhook", async (req, res) => {
             console.log("✅ Valid message event detected");
             
             const convId = event.conversation.id;
-            const inboxId = event.inbox.id.toString();
+            const accountId = event.account.id;
             const customAttributes = event.sender.custom_attributes || {};
             console.log("🔍 Custom attributes:", customAttributes);
 
-            // Get channel dynamically from custom attributes, with fallback to map
-            const channel = customAttributes.slack_channel;
-            console.log("🔍 Channel:", channel);
+            // Extract dynamic channel and folder info
+            const slackChannel = customAttributes.slack_channel;
+            const folderId = customAttributes.folder_id; // New: for tracking different folders
+            
+            console.log("🔍 Channel:", slackChannel);
+            console.log("🔍 Folder ID:", folderId);
             
             const text = event.content;
             const senderName = event.sender.name;
- 
-             console.log("📊 Extracted data:");
-             console.log("   - Conversation ID:", convId);
-             console.log("   - Inbox ID:", inboxId);
-             console.log("   - Custom Attributes:", JSON.stringify(customAttributes));
-             console.log("   - Channel:", channel);
-             console.log("   - Text:", text);
-             console.log("   - Sender:", senderName);
- 
-             if (!channel) {
-                 console.log("❌ No channel found from custom attributes or inbox map.");
-                 return res.sendStatus(200);
-             }
+
+            console.log("📊 Extracted data:");
+            console.log("   - Conversation ID:", convId);
+            console.log("   - Account ID:", accountId);
+            console.log("   - Slack Channel:", slackChannel);
+            console.log("   - Folder ID:", folderId);
+            console.log("   - Text:", text);
+            console.log("   - Sender:", senderName);
+
+            if (!slackChannel) {
+                console.log("❌ No slack_channel found in custom attributes.");
+                return res.sendStatus(200);
+            }
 
             if (!text) {
                 console.log("❌ No content in Chatwoot webhook payload.");
                 return res.sendStatus(200);
             }
 
-            // Check if this conversation already has a thread in Slack
-            const existingThreadKey = `conv:${convId}:thread`;
-            const existingThreadTs = await redis.get(existingThreadKey);
+            // Create unique thread key including folder for better organization
+            const threadKey = folderId ? 
+                `folder:${folderId}:conv:${convId}:thread` : 
+                `conv:${convId}:thread`;
             
-            console.log("🔍 Checking for existing thread:", existingThreadKey);
+            const existingThreadTs = await redis.get(threadKey);
+            
+            console.log("🔍 Checking for existing thread:", threadKey);
             console.log("💾 Existing thread timestamp:", existingThreadTs);
 
             const slackMessage = `*${senderName}*: ${text}`;
             console.log("📤 Slack message content:", slackMessage);
 
             let slackPayload = {
-                channel: channel,
+                channel: slackChannel,
                 text: slackMessage
             };
 
@@ -112,21 +129,23 @@ app.post("/chatwoot-webhook", async (req, res) => {
             console.log("📥 Slack API response:", JSON.stringify(data, null, 2));
             
             if (data.ok) {
-                const dataToStore = JSON.stringify({
-                    accountId: event.account.id,
-                    conversationId: convId
+                const conversationData = JSON.stringify({
+                    accountId,
+                    conversationId: convId,
+                    folderId: folderId || null,
+                    slackChannel
                 });
 
-                // If this was a new message (not a thread reply), store the conversation -> thread mapping
+                // Store conversation -> thread mapping (only for new threads)
                 if (!existingThreadTs) {
-                    await redis.set(existingThreadKey, data.message.ts); // Store the actual thread_ts
-                    console.log("💾 Stored conversation->thread mapping:", existingThreadKey, "->", data.message.ts);
+                    await redis.set(threadKey, data.message.ts);
+                    console.log("💾 Stored conversation->thread mapping:", threadKey, "->", data.message.ts);
                 }
                 
-                // Always store thread -> conversation mapping. Use the parent message's ts.
-                const threadToConvKey = `${channel}:${data.message.thread_ts || data.message.ts}`;
-                await redis.set(threadToConvKey, dataToStore);
-                console.log("💾 Stored thread->conversation mapping:", threadToConvKey, "->", dataToStore);
+                // Store thread -> conversation mapping for bidirectional lookup
+                const threadToConvKey = `${slackChannel}:${data.message.ts}`;
+                await redis.set(threadToConvKey, conversationData);
+                console.log("💾 Stored thread->conversation mapping:", threadToConvKey, "->", conversationData);
                 
                 console.log("✅ Message sent to Slack successfully");
             } else {
@@ -165,8 +184,8 @@ app.post("/slack-events", async (req, res) => {
         if (ev && ev.type === "message" && !ev.bot_id && ev.text) {
             console.log("✅ Valid message from user detected");
             
-            // Check if this is a threaded message or a reply to a thread
-            const threadTs = ev.thread_ts || ev.ts; // Use thread_ts if available, otherwise the message itself
+            // For replies, use thread_ts. For new messages, use ts.
+            const threadTs = ev.thread_ts || ev.ts;
             const key = `${ev.channel}:${threadTs}`;
             
             console.log("🔑 Looking up Redis key:", key);
@@ -177,20 +196,21 @@ app.post("/slack-events", async (req, res) => {
             console.log("💾 Redis lookup result (raw):", rawData);
             
             if (rawData) {
-                let accountId, convId;
+                let accountId, convId, folderId, slackChannel;
                 try {
-                    // Try to parse the new JSON format
                     const parsedData = JSON.parse(rawData);
                     accountId = parsedData.accountId;
                     convId = parsedData.conversationId;
+                    folderId = parsedData.folderId;
+                    slackChannel = parsedData.slackChannel;
                 } catch (e) {
-                    // If parsing fails, it's the old format (just the conversation ID)
+                    // Fallback for old format
                     console.warn("⚠️ Could not parse Redis data as JSON. Falling back to old format.");
-                    convId = rawData; // The raw data is the conversation ID
-                    accountId = '129102'; // Hardcoded fallback for your account ID
+                    convId = rawData;
+                    accountId = '129102';
                 }
 
-                console.log("📊 Parsed Redis data:", { accountId, convId });
+                console.log("📊 Parsed Redis data:", { accountId, convId, folderId, slackChannel });
 
                 if (!accountId || !convId) {
                     console.error("❌ Invalid data in Redis, even after fallback:", rawData);
@@ -201,6 +221,7 @@ app.post("/slack-events", async (req, res) => {
                 console.log("📤 Message content:", ev.text);
                 console.log("🎯 Account ID:", accountId);
                 console.log("🎯 Conversation ID:", convId);
+                console.log("🎯 Folder ID:", folderId);
 
                 const chatwootUrl = `https://app.chatwoot.com/api/v1/accounts/${accountId}/conversations/${convId}/messages`;
                 console.log("🔗 Posting to Chatwoot URL:", chatwootUrl);
@@ -213,7 +234,7 @@ app.post("/slack-events", async (req, res) => {
                     },
                     body: JSON.stringify({
                         content: ev.text,
-                        message_type: "outgoing", // This represents agent/team member responses
+                        message_type: "outgoing",
                     }),
                 });
 
