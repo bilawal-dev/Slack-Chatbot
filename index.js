@@ -1,7 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import { createClient } from 'redis';
-import authRoutes from './routes/authRoutes.js';
+import authRoutes from './routes/AuthRoutes.js';
 import cors from 'cors';
 
 dotenv.config();
