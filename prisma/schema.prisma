@@ -14,4 +14,17 @@ model User {
   name      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  threads   Thread[]
+}
+
+model Thread {
+  id            String   @id @default(cuid())
+  user          User     @relation(fields: [userId], references: [id])
+  userId        String
+  listId        String // This represents a location under a franchise
+  folderId      String // This represents a franchise
+  name          String? @default("New Thread")
+  slackThreadTs String? // Slack’s thread key, can be optional initially
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }

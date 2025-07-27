@@ -2,7 +2,9 @@ import express from "express";
 import dotenv from "dotenv";
 import { createClient } from 'redis';
 import authRoutes from './routes/AuthRoutes.js';
+import chatRoutes from './routes/ChatRoutes.js';
 import cors from 'cors';
+import { AuthenticateToken } from './middleware/AuthMiddleware.js';
 
 dotenv.config();
 
@@ -46,6 +48,9 @@ app.get('/redis/clear', async (req, res) => {
 
 // * Auth Routes
 app.use('/api/auth', authRoutes)
+
+// * Chat Routes
+app.use('/api/chat', AuthenticateToken, chatRoutes)
 
 app.post("/chatwoot-webhook", async (req, res) => {
     console.log("🔔 Chatwoot webhook received:");

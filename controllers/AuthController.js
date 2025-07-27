@@ -27,7 +27,7 @@ export default class AuthController {
                 success: true,
                 message: 'User created successfully',
                 user: {
-                    id: user.id,
+                    userId: user.id,
                     email: user.email,
                     name: user.name
                 }
@@ -53,7 +53,7 @@ export default class AuthController {
                 return res.status(401).json({ success: false, message: 'Invalid credentials' })
 
             const payload = {
-                id: user.id,
+                userId: user.id,
                 email: user.email,
                 name: user.name
             }
@@ -70,7 +70,7 @@ export default class AuthController {
                 message: 'Login successful',
                 token,
                 user: {
-                    id: user.id,
+                    userId: user.id,
                     email: user.email,
                     name: user.name
                 }
@@ -81,11 +81,11 @@ export default class AuthController {
     }
 
     static async Authenticate(req, res) {
-        const { id, email, name } = req.user
+        const { userId, email, name } = req.user
         res.json({
             success: true,
             message: 'User authenticated',
-            user: { id, email, name }
+            user: { userId, email, name }
         })
     }
 }
