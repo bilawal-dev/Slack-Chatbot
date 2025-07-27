@@ -68,7 +68,12 @@ export default class AuthController {
             res.json({
                 success: true,
                 message: 'Login successful',
-                token
+                token,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.name
+                }
             })
         } catch (err) {
             res.status(500).json({ success: false, message: 'Server error' })
