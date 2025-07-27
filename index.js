@@ -1,6 +1,8 @@
 import express from "express";
 import dotenv from "dotenv";
 import { createClient } from 'redis';
+import authRoutes from './routes/authRoutes.js';
+import cors from 'cors';
 
 dotenv.config();
 
@@ -12,6 +14,7 @@ console.log("✅ Redis connected successfully");
 
 const app = express();
 app.use(express.json());
+app.use(cors());
 
 const PORT = process.env.PORT || 5000;
 
@@ -41,21 +44,24 @@ app.get('/redis/clear', async (req, res) => {
     }
 });
 
+// * Auth Routes
+app.use('/api/auth', authRoutes)
+
 app.post("/chatwoot-webhook", async (req, res) => {
     console.log("🔔 Chatwoot webhook received:");
     console.log("📋 Full payload:", JSON.stringify(req.body, null, 2));
-    
+
     try {
         const event = req.body;
         console.log("🔍 Event type:", event.event);
         console.log("📝 Message type:", event.message_type);
-        
+
         if (
             event.event === "message_created" &&
             event.message_type === "incoming"
         ) {
             console.log("✅ Valid message event detected");
-            
+
             const convId = event.conversation.id;
             const accountId = event.account.id;
             const customAttributes = event.sender.custom_attributes || {};
@@ -64,10 +70,10 @@ app.post("/chatwoot-webhook", async (req, res) => {
             // Extract dynamic channel and folder info
             const slackChannel = customAttributes.slack_channel;
             const folderId = customAttributes.folder_id; // New: for tracking different folders
-            
+
             console.log("🔍 Channel:", slackChannel);
             console.log("🔍 Folder ID:", folderId);
-            
+
             const text = event.content;
             const senderName = event.sender.name;
 
@@ -91,9 +97,9 @@ app.post("/chatwoot-webhook", async (req, res) => {
 
             // Create channel-specific thread key to allow separate threads per channel
             const threadKey = `conv:${convId}:channel:${slackChannel}:thread`;
-            
+
             const existingThreadTs = await redis.get(threadKey);
-            
+
             console.log("🔍 Checking for existing thread:", threadKey);
             console.log("💾 Existing thread timestamp:", existingThreadTs);
 
@@ -122,10 +128,10 @@ app.post("/chatwoot-webhook", async (req, res) => {
                 },
                 body: JSON.stringify(slackPayload),
             });
-            
+
             const data = await response.json();
             console.log("📥 Slack API response:", JSON.stringify(data, null, 2));
-            
+
             if (data.ok) {
                 const conversationData = JSON.stringify({
                     accountId,
@@ -139,12 +145,12 @@ app.post("/chatwoot-webhook", async (req, res) => {
                     await redis.set(threadKey, data.message.ts);
                     console.log("💾 Stored conversation->thread mapping:", threadKey, "->", data.message.ts);
                 }
-                
+
                 // Store thread -> conversation mapping for bidirectional lookup
                 const threadToConvKey = `${slackChannel}:${data.message.ts}`;
                 await redis.set(threadToConvKey, conversationData);
                 console.log("💾 Stored thread->conversation mapping:", threadToConvKey, "->", conversationData);
-                
+
                 console.log("✅ Message sent to Slack successfully");
             } else {
                 console.error("❌ Slack API Error:", data.error);
@@ -165,7 +171,7 @@ app.post("/chatwoot-webhook", async (req, res) => {
 app.post("/slack-events", async (req, res) => {
     console.log("🔔 Slack event received:");
     console.log("📋 Full payload:", JSON.stringify(req.body, null, 2));
-    
+
     const body = req.body;
     // Slack URL verification
     if (body.type === "url_verification") {
@@ -177,22 +183,22 @@ app.post("/slack-events", async (req, res) => {
     try {
         const ev = body.event;
         console.log("🔍 Event data:", JSON.stringify(ev, null, 2));
-        
+
         // Handle both threaded messages and replies to thread parents
         if (ev && ev.type === "message" && !ev.bot_id && ev.text) {
             console.log("✅ Valid message from user detected");
-            
+
             // For replies, use thread_ts. For new messages, use ts.
             const threadTs = ev.thread_ts || ev.ts;
             const key = `${ev.channel}:${threadTs}`;
-            
+
             console.log("🔑 Looking up Redis key:", key);
             console.log("🧵 Thread timestamp:", threadTs);
             console.log("📝 Is threaded reply:", !!ev.thread_ts);
-            
+
             const rawData = await redis.get(key);
             console.log("💾 Redis lookup result (raw):", rawData);
-            
+
             if (rawData) {
                 let accountId, convId, folderId, slackChannel;
                 try {
@@ -223,7 +229,7 @@ app.post("/slack-events", async (req, res) => {
 
                 const chatwootUrl = `https://app.chatwoot.com/api/v1/accounts/${accountId}/conversations/${convId}/messages`;
                 console.log("🔗 Posting to Chatwoot URL:", chatwootUrl);
-                
+
                 const response = await fetch(chatwootUrl, {
                     method: "POST",
                     headers: {
@@ -237,7 +243,7 @@ app.post("/slack-events", async (req, res) => {
                 });
 
                 console.log("📥 Chatwoot API response status:", response.status);
-                
+
                 if (!response.ok) {
                     const errorData = await response.text();
                     console.error("❌ Chatwoot API Error:", response.status, errorData);
