@@ -1,15 +1,19 @@
-import { Router } from 'express'
-import { ChatController } from '../controllers/ChatController.js'
+import { Router } from 'express';
+import { ChatController } from '../controllers/ChatController.js';
 
-const router = Router()
+const router = Router();
 
 // * Locations
-router.get('/locations/:folderId', ChatController.getListsInFolder)
+router.get('/locations/:folderId', ChatController.getListsInFolder);
 
 // * Threads
-router.post('/threads', ChatController.createThread)
-router.get('/threads/:listId', ChatController.getThreads)
-router.put('/threads/:threadId', ChatController.updateThread)
-router.delete('/threads/:threadId', ChatController.deleteThread)
+router.post('/threads', ChatController.createThread);
+router.get('/threads/:listId', ChatController.getThreads);
+router.put('/threads/:threadId', ChatController.updateThread);
+router.delete('/threads/:threadId', ChatController.deleteThread);
 
-export default router
+// * Messages
+router.post('/messages', ChatController.sendMessage);
+router.get('/messages/:threadId', ChatController.getMessagesForThread);
+
+export default router;

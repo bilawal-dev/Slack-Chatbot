@@ -1,10 +1,11 @@
 import dotenv from 'dotenv';
 import prisma from '../config/database.js';
+import { listToSlackChannelMapping } from '../utils/List_To_SlackChannel_Mapping.js';
 
 dotenv.config();
 
 const API_TOKEN = process.env.CLICKUP_PERSONAL_API_TOKEN;
-const BASE_URL = 'https://api.clickup.com/api/v2';
+const CLICKUP_API_BASE_URL = 'https://api.clickup.com/api/v2';
 
 // Known IDs from franchise_template_analysis.md and ExtraInfo.md
 export const KNOWN_IDS = {
@@ -25,7 +26,7 @@ export class ChatController {
 
     // * Helper Function For API Calls
     static async apiCall(endpoint, options = {}) {
-        const url = `${BASE_URL}${endpoint}`;
+        const url = `${CLICKUP_API_BASE_URL}${endpoint}`;
 
         try {
             const response = await fetch(url, {
@@ -236,6 +237,121 @@ export class ChatController {
                 success: false,
                 message: error.message || 'An error occurred while deleting the thread',
             });
+        }
+    }
+
+    // * POST a new message to a thread in Slack
+    static async sendMessage(req, res) {
+        const { threadId, text } = req.body;
+        const { userId } = req.user;
+
+        if (!threadId || !text) {
+            return res.status(400).json({ success: false, message: "threadId and text are required" });
+        }
+
+        try {
+            const thread = await prisma.thread.findFirst({
+                where: {
+                    id: threadId,
+                    userId: userId,
+                },
+            });
+
+            if (!thread) {
+                return res.status(404).json({ success: false, message: "Thread not found or you do not have permission to access it" });
+            }
+
+            const channelId = listToSlackChannelMapping[thread.listId];
+            if (!channelId) {
+                return res.status(400).json({ success: false, message: "No Slack channel configured for this location" });
+            }
+
+            let slackThreadTs = thread.slackThreadTs;
+            const slackMessage = {
+                channel: channelId,
+                text: text,
+            };
+
+            if (slackThreadTs) {
+                slackMessage.thread_ts = slackThreadTs;
+            } else {
+                // To make the initial message more descriptive in the channel
+                slackMessage.text = `New thread started by user: ${text}`;
+            }
+
+            const response = await fetch("https://slack.com/api/chat.postMessage", {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(slackMessage),
+            });
+
+            const data = await response.json();
+
+            if (!data.ok) {
+                console.error("❌ Slack API Error:", data.error);
+                return res.status(500).json({ success: false, message: `Failed to send message to Slack: ${data.error}` });
+            }
+
+            if (!slackThreadTs) {
+                // If this was a new thread, save the timestamp
+                slackThreadTs = data.ts;
+                await prisma.thread.update({
+                    where: { id: threadId },
+                    data: { slackThreadTs: slackThreadTs },
+                });
+            }
+
+            const message = await prisma.message.create({
+                data: {
+                    text: text,
+                    sender: "USER",
+                    threadId: threadId,
+                },
+            });
+
+            return res.status(201).json({ success: true, message: "Message sent successfully", data: message });
+
+        } catch (error) {
+            console.error("Error sending message:", error);
+            return res.status(500).json({ success: false, message: "Internal server error" });
+        }
+    }
+
+    // * GET all messages for a thread
+    static async getMessagesForThread(req, res) {
+        const { threadId } = req.params;
+        const { userId } = req.user;
+
+        try {
+            // First, verify the user owns the thread
+            const thread = await prisma.thread.findFirst({
+                where: {
+                    id: threadId,
+                    userId: userId
+                }
+            });
+
+            if (!thread) {
+                return res.status(404).json({ success: false, message: "Thread not found or you do not have permission to access it" });
+            }
+
+            // If ownership is confirmed, fetch the messages
+            const messages = await prisma.message.findMany({
+                where: {
+                    threadId: threadId,
+                },
+                orderBy: {
+                    createdAt: 'asc' // Fetch messages in chronological order
+                }
+            });
+
+            return res.status(200).json({ success: true, data: messages });
+        } catch (error) {
+            console.error(`Error fetching messages for thread ${threadId}:`, error);
+            return res.status(500).json({ success: false, message: "Internal server error" });
         }
     }
 }

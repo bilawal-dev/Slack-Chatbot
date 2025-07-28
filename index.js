@@ -5,6 +5,7 @@ import authRoutes from './routes/AuthRoutes.js';
 import chatRoutes from './routes/ChatRoutes.js';
 import cors from 'cors';
 import { AuthenticateToken } from './middleware/AuthMiddleware.js';
+import slackRoutes from './routes/SlackRoutes.js';
 
 dotenv.config();
 
@@ -51,6 +52,9 @@ app.use('/api/auth', authRoutes)
 
 // * Chat Routes
 app.use('/api/chat', AuthenticateToken, chatRoutes)
+
+// * Slack Routes
+app.use('/api/slack', slackRoutes);
 
 app.post("/chatwoot-webhook", async (req, res) => {
     console.log("🔔 Chatwoot webhook received:");
