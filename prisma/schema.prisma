@@ -24,7 +24,7 @@ model Thread {
   listId        String // This represents a location under a franchise
   folderId      String // This represents a franchise
   name          String? @default("New Thread")
-  slackThreadTs String? // Slack’s thread key, can be optional initially
+  slackThreadTs String? @unique // Slack’s thread key, can be optional initially
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   messages      Message[]
